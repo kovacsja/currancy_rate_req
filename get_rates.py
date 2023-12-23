@@ -24,7 +24,7 @@ def create_db():
     conn.close()
 
 
-def get_rates():
+def get_rates(rebase: bool = False):
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
 
@@ -45,36 +45,59 @@ def get_rates():
 
     maxdate = curr.execute("select max(exc_date) from rates").fetchone()
 
-    if maxdate[0] != (None,):
-        while maxdate[0] < today.strftime("%Y-%m-%d"):
-            today = today - timedelta(days=1)
-            dates.append(today)
-    else:
+    if rebase:
         for i in range(date_range):
             today = today - timedelta(days=1)
             dates.append(today)
 
-    if len(dates) != 1 and maxdate != today:
         for d in dates:
             date_str: str = datetime.strftime(d, "%Y-%m-%d")
-            logger.info(date_str)
+            logger.info(f"getting rates for: {date_str}")
             url = f"http://api.exchangeratesapi.io/v1/{date_str}?access_key={acc_key}&symbols={base}"
             response = requests.get(url=url, headers=headers, timeout=25)
             data = response.json()
 
             for i in data["rates"]:
                 curr.executemany(
-                    "insert into rates values (?, ?, ?)",
+                    "insert into rates values (?, ?, ?) ON CONFLICT (Exc_date, Currency) DO UPDATE SET Exc_rate = excluded.Exc_rate",
                     [(date_str, i, data["rates"][i])],
                 )
                 conn.commit()
+
+    else:
+        if maxdate[0] != (None,):
+            while maxdate[0] < today.strftime("%Y-%m-%d"):
+                today = today - timedelta(days=1)
+                dates.append(today)
+        else:
+            for i in range(date_range):
+                today = today - timedelta(days=1)
+                dates.append(today)
+
+        if datetime.strptime(maxdate[0], "%Y-%m-%d").date() in dates:
+            dates.remove(datetime.strptime(maxdate[0], "%Y-%m-%d").date())
+
+        if len(dates) and maxdate != today:
+            for d in dates:
+                date_str: str = datetime.strftime(d, "%Y-%m-%d")
+                logger.info(f"getting rates for: {date_str}")
+                url = f"http://api.exchangeratesapi.io/v1/{date_str}?access_key={acc_key}&symbols={base}"
+                response = requests.get(url=url, headers=headers, timeout=25)
+                data = response.json()
+
+                for i in data["rates"]:
+                    curr.executemany(
+                        "insert into rates values (?, ?, ?)",
+                        [(date_str, i, data["rates"][i])],
+                    )
+                    conn.commit()
 
     curr.close()
     conn.close()
 
 
 def main():
-    get_rates()
+    get_rates(rebase=False)
 
 
 if __name__ == "__main__":

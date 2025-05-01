@@ -2,6 +2,7 @@ import requests
 import sqlite3
 import logging
 from datetime import datetime, timedelta
+from time import sleep
 
 
 def create_db():
@@ -35,7 +36,7 @@ def get_rates(rebase: bool = False):
     conn = sqlite3.connect("rates.sqlite")
     curr = conn.cursor()
     base: str = "EUR,USD,CZK,HUF"
-    date_range = 90
+    date_range = 10
     today = datetime.today().date()
     dates = [today]
     headers = {
@@ -51,18 +52,21 @@ def get_rates(rebase: bool = False):
             dates.append(today)
 
         for d in dates:
-            date_str: str = datetime.strftime(d, "%Y-%m-%d")
+            date_str: str = datetime.strftime(d, "%Y-%m-%d")  # type: ignore
             logger.info(f"getting rates for: {date_str}")
             url = f"http://api.exchangeratesapi.io/v1/{date_str}?access_key={acc_key}&symbols={base}"
             response = requests.get(url=url, headers=headers, timeout=25)
             data = response.json()
 
-            for i in data["rates"]:
-                curr.executemany(
-                    "insert into rates values (?, ?, ?) ON CONFLICT (Exc_date, Currency) DO UPDATE SET Exc_rate = excluded.Exc_rate",
-                    [(date_str, i, data["rates"][i])],
-                )
-                conn.commit()
+            if list(data.keys())[0] == "error":
+                logger.error(f"Error: {data['error']}")
+            else:
+                for i in data["rates"]:
+                    curr.executemany(
+                        "insert into rates values (?, ?, ?) ON CONFLICT (Exc_date, Currency) DO UPDATE SET Exc_rate = excluded.Exc_rate",
+                        [(date_str, i, data["rates"][i])],
+                    )
+                    conn.commit()
 
     else:
         if maxdate[0] != (None,):
@@ -78,11 +82,12 @@ def get_rates(rebase: bool = False):
             dates.remove(datetime.strptime(maxdate[0], "%Y-%m-%d").date())
 
         if len(dates) and maxdate != today:
-            for d in dates:
-                date_str: str = datetime.strftime(d, "%Y-%m-%d")
+            for d in sorted(dates):
+                date_str: str = datetime.strftime(d, "%Y-%m-%d")  # type: ignore
                 logger.info(f"getting rates for: {date_str}")
                 url = f"http://api.exchangeratesapi.io/v1/{date_str}?access_key={acc_key}&symbols={base}"
                 response = requests.get(url=url, headers=headers, timeout=25)
+                sleep(2)
                 data = response.json()
 
                 for i in data["rates"]:
